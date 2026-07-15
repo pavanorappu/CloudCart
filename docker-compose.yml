@@ -1,0 +1,34 @@
+services:
+  mariadb:
+    image: mariadb:10.11
+    container_name: mariadb
+    restart: always
+    environment:
+      MARIADB_ROOT_PASSWORD: Root@123
+      MARIADB_DATABASE: cloudcart
+      MARIADB_USER: cloudcart
+      MARIADB_PASSWORD: CloudCart@123
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      - ./app/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - cloudcart-network
+
+  backend:
+    build: ./app/backend
+    container_name: cloudcart-backend
+    restart: always
+    ports:
+      - "5000:5000"
+    depends_on:
+      - mariadb
+    networks:
+      - cloudcart-network
+
+volumes:
+  mariadb-data:
+
+networks:
+  cloudcart-network:
