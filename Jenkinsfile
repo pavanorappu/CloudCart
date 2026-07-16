@@ -15,21 +15,47 @@ pipeline {
             }
         }
 
-        stage('List Docker Images') {
+        stage('Stop Old Container') {
             steps {
-                sh 'docker images'
+                sh '''
+                docker stop cloudcart-backend || true
+                docker rm cloudcart-backend || true
+                '''
             }
         }
 
+        stage('Deploy Container') {
+            steps {
+                sh '''
+                docker run -d \
+                  --name cloudcart-backend \
+                  -p 5000:5000 \
+                  cloudcart-backend
+                '''
+            }
+        }
+
+        stage('Verify Container') {
+            steps {
+                sh 'docker ps'
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                sh 'curl http://localhost:5000/health'
+            }
+        }
     }
 
     post {
         success {
-            echo 'Pipeline executed successfully!'
+            echo 'Deployment Successful!'
         }
 
         failure {
-            echo 'Pipeline failed!'
+            echo 'Deployment Failed!'
+            sh 'docker ps -a'
         }
     }
 }
