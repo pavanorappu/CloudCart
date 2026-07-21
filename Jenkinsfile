@@ -1,6 +1,12 @@
 pipeline {
     agent any
 
+    environment {
+        IMAGE_NAME = "cloudcart-backend"
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        KUBECONFIG = "/var/lib/jenkins/.kube/config"
+    }
+
     stages {
 
         stage('Checkout') {
@@ -11,51 +17,75 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh 'docker build -t cloudcart-backend ./app/backend'
-            }
-        }
-
-        stage('Stop Old Container') {
-            steps {
                 sh '''
-                docker stop cloudcart-backend || true
-                docker rm cloudcart-backend || true
+                docker build \
+                -t ${IMAGE_NAME}:${IMAGE_TAG} \
+                -t ${IMAGE_NAME}:latest \
+                ./app/backend
                 '''
             }
         }
 
-        stage('Deploy Container') {
+        stage('Load Image into Minikube') {
             steps {
                 sh '''
-                docker run -d \
-                  --name cloudcart-backend \
-                  -p 5000:5000 \
-                  cloudcart-backend
+                minikube image load ${IMAGE_NAME}:${IMAGE_TAG}
                 '''
             }
         }
 
-        stage('Verify Container') {
+        stage('Update Kubernetes Deployment') {
             steps {
-                sh 'docker ps'
+                sh '''
+                kubectl set image deployment/cloudcart-backend \
+                backend=${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('Wait For Rollout') {
+            steps {
+                sh '''
+                kubectl rollout status deployment/cloudcart-backend
+                '''
+            }
+        }
+
+        stage('Verify Pods') {
+            steps {
+                sh '''
+                kubectl get pods
+                '''
             }
         }
 
         stage('Health Check') {
             steps {
-                sh 'curl http://localhost:5000/health'
+                sh '''
+                URL=$(minikube service cloudcart-backend-service --url)
+                curl ${URL}/health
+                '''
             }
         }
     }
 
     post {
+
         success {
-            echo 'Deployment Successful!'
+            echo '======================================='
+            echo ' Kubernetes Deployment Successful'
+            echo '======================================='
         }
 
         failure {
-            echo 'Deployment Failed!'
-            sh 'docker ps -a'
+            echo '======================================='
+            echo ' Deployment Failed'
+            echo '======================================='
+
+            sh '''
+            kubectl get pods
+            kubectl describe deployment cloudcart-backend
+            '''
         }
     }
 }
