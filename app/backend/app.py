@@ -14,7 +14,8 @@ def get_connection():
 @app.route("/")
 def home():
     return jsonify({
-        "message": "Welcome to CloudCart API"
+        "message": "Welcome to CloudCart API - Version 3",
+        "deployed_by":"Jenkins Kubernetes Pipeline"
     })
 
 @app.route("/health")
