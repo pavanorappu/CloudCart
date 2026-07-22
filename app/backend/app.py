@@ -11,7 +11,7 @@ REQUEST_COUNT = Counter(
 
 def get_connection():
     return mysql.connector.connect(
-        host="localhost",
+        host="host.minikube.internal",
         user="cloudcart",
         password="CloudCart@123",
         database="cloudcart"
