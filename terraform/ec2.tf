@@ -15,6 +15,8 @@ resource "aws_instance" "cloudcart_server" {
 
   associate_public_ip_address = true
 
+  user_data = file("${path.module}/user-data.sh")
+
   tags = {
     Name = "${var.project_name}-Server"
   }
