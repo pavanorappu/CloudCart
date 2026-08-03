@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = "cloudcart-backend"
+        IMAGE_NAME = "pavanorappu/cloudcart-backend"
         IMAGE_TAG = "${BUILD_NUMBER}"
         KUBECONFIG = "/var/lib/jenkins/.kube/config"
     }
@@ -26,6 +26,38 @@ pipeline {
             }
         }
 
+        stage('Docker Hub Login') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh '''
+                    echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                    '''
+                }
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                sh '''
+                docker push ${IMAGE_NAME}:${IMAGE_TAG}
+
+                docker push ${IMAGE_NAME}:latest
+                '''
+            }
+        }
+
+        stage('Pull Latest Image') {
+            steps {
+                sh '''
+                docker pull ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
         stage('Load Image into Minikube') {
             steps {
                 sh '''
@@ -39,6 +71,8 @@ pipeline {
                 sh '''
                 kubectl set image deployment/cloudcart-backend \
                 backend=${IMAGE_NAME}:${IMAGE_TAG}
+
+                kubectl rollout restart deployment/cloudcart-backend
                 '''
             }
         }
@@ -55,6 +89,7 @@ pipeline {
             steps {
                 sh '''
                 kubectl get pods
+                kubectl get svc
                 '''
             }
         }
@@ -72,19 +107,22 @@ pipeline {
     post {
 
         success {
-            echo '======================================='
-            echo ' Kubernetes Deployment Successful'
-            echo '======================================='
+            echo '=========================================='
+            echo ' CloudCart Deployment Successful'
+            echo ' Docker Image Built & Pushed'
+            echo ' Kubernetes Updated Successfully'
+            echo '=========================================='
         }
 
         failure {
-            echo '======================================='
+            echo '=========================================='
             echo ' Deployment Failed'
-            echo '======================================='
+            echo '=========================================='
 
             sh '''
             kubectl get pods
             kubectl describe deployment cloudcart-backend
+            kubectl get events --sort-by=.lastTimestamp | tail -20
             '''
         }
     }
