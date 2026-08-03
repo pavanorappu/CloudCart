@@ -4,6 +4,14 @@
 # Log files
 *.log
 
+# Terraform
+.terraform/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+*.tfvars
+
 # OS generated files
 .DS_Store
 Thumbs.db
