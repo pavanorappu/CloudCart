@@ -2,9 +2,10 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = "pavanorappu/cloudcart-backend"
+        DOCKERHUB_USERNAME = "pavanorappu"
+        IMAGE_NAME = "cloudcart-backend"
+        IMAGE = "${DOCKERHUB_USERNAME}/${IMAGE_NAME}"
         IMAGE_TAG = "${BUILD_NUMBER}"
-        KUBECONFIG = "/var/lib/jenkins/.kube/config"
     }
 
     stages {
@@ -17,75 +18,48 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh '''
+                sh """
                 docker build \
-                -t ${IMAGE_NAME}:${IMAGE_TAG} \
-                -t ${IMAGE_NAME}:latest \
+                -t ${IMAGE}:${IMAGE_TAG} \
+                -t ${IMAGE}:latest \
                 ./app/backend
-                '''
+                """
             }
         }
 
-        stage('Docker Hub Login') {
+        stage('Login to Docker Hub') {
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'dockerhub-creds',
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS'
+                    usernameVariable: 'USERNAME',
+                    passwordVariable: 'PASSWORD'
                 )]) {
                     sh '''
-                    echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                    echo $PASSWORD | docker login -u $USERNAME --password-stdin
                     '''
                 }
             }
         }
 
-        stage('Push Docker Image') {
+        stage('Push Docker Images') {
             steps {
-                sh '''
-                docker push ${IMAGE_NAME}:${IMAGE_TAG}
-
-                docker push ${IMAGE_NAME}:latest
-                '''
+                sh """
+                docker push ${IMAGE}:${IMAGE_TAG}
+                docker push ${IMAGE}:latest
+                """
             }
         }
 
-        stage('Pull Latest Image') {
+        stage('Deploy to Kubernetes') {
             steps {
                 sh '''
-                docker pull ${IMAGE_NAME}:${IMAGE_TAG}
-                '''
-            }
-        }
-
-        stage('Load Image into Minikube') {
-            steps {
-                sh '''
-                minikube image load ${IMAGE_NAME}:${IMAGE_TAG}
-                '''
-            }
-        }
-
-        stage('Update Kubernetes Deployment') {
-            steps {
-                sh '''
-                kubectl set image deployment/cloudcart-backend \
-                backend=${IMAGE_NAME}:${IMAGE_TAG}
-
                 kubectl rollout restart deployment/cloudcart-backend
-                '''
-            }
-        }
-
-        stage('Wait For Rollout') {
-            steps {
-                sh '''
                 kubectl rollout status deployment/cloudcart-backend
                 '''
             }
         }
 
-        stage('Verify Pods') {
+        stage('Verify Deployment') {
             steps {
                 sh '''
                 kubectl get pods
@@ -107,22 +81,19 @@ pipeline {
     post {
 
         success {
-            echo '=========================================='
-            echo ' CloudCart Deployment Successful'
-            echo ' Docker Image Built & Pushed'
-            echo ' Kubernetes Updated Successfully'
-            echo '=========================================='
+            echo "==================================="
+            echo " Production Deployment Successful"
+            echo "==================================="
         }
 
         failure {
-            echo '=========================================='
-            echo ' Deployment Failed'
-            echo '=========================================='
+            echo "==================================="
+            echo " Deployment Failed"
+            echo "==================================="
 
             sh '''
             kubectl get pods
             kubectl describe deployment cloudcart-backend
-            kubectl get events --sort-by=.lastTimestamp | tail -20
             '''
         }
     }
