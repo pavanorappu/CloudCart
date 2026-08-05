@@ -8,6 +8,10 @@ pipeline {
         IMAGE_TAG = "${BUILD_NUMBER}"
     }
 
+    tools {
+        sonarQubeScanner 'SonarScanner'
+    }
+
     stages {
 
         stage('Checkout') {
@@ -16,24 +20,44 @@ pipeline {
             }
         }
 
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    sh '''
+                        sonar-scanner
+                    '''
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
         stage('Build Docker Image') {
             steps {
                 sh """
                 docker build \
-                -t ${IMAGE}:${IMAGE_TAG} \
-                -t ${IMAGE}:latest \
-                ./app/backend
+                    -t ${IMAGE}:${IMAGE_TAG} \
+                    -t ${IMAGE}:latest \
+                    ./app/backend
                 """
             }
         }
 
         stage('Login to Docker Hub') {
             steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-creds',
-                    usernameVariable: 'USERNAME',
-                    passwordVariable: 'PASSWORD'
-                )]) {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'USERNAME',
+                        passwordVariable: 'PASSWORD'
+                    )
+                ]) {
                     sh '''
                     echo $PASSWORD | docker login -u $USERNAME --password-stdin
                     '''
@@ -54,7 +78,7 @@ pipeline {
             steps {
                 sh '''
                 kubectl rollout restart deployment/cloudcart-backend
-                kubectl rollout status deployment/cloudcart-backend
+                kubectl rollout status deployment/cloudcart-backend --timeout=180s
                 '''
             }
         }
@@ -71,8 +95,14 @@ pipeline {
         stage('Health Check') {
             steps {
                 sh '''
-                URL=$(minikube service cloudcart-backend-service --url)
-                curl ${URL}/health
+                kubectl port-forward svc/cloudcart-backend-service 8081:5000 >/tmp/pf.log 2>&1 &
+                PF_PID=$!
+
+                sleep 10
+
+                curl http://localhost:8081/health
+
+                kill $PF_PID || true
                 '''
             }
         }
@@ -81,20 +111,25 @@ pipeline {
     post {
 
         success {
-            echo "==================================="
-            echo " Production Deployment Successful"
-            echo "==================================="
+            echo "===================================="
+            echo " CloudCart Deployment Successful"
+            echo "===================================="
         }
 
         failure {
-            echo "==================================="
-            echo " Deployment Failed"
-            echo "==================================="
+            echo "===================================="
+            echo " CloudCart Deployment Failed"
+            echo "===================================="
 
             sh '''
             kubectl get pods
-            kubectl describe deployment cloudcart-backend
+            kubectl describe deployment cloudcart-backend || true
+            kubectl logs deployment/cloudcart-backend || true
             '''
+        }
+
+        always {
+            cleanWs()
         }
     }
 }
