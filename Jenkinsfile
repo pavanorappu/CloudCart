@@ -2,9 +2,10 @@ pipeline {
     agent any
 
     environment {
+        DOCKERHUB_USERNAME = "pavanorappu"
         IMAGE_NAME = "cloudcart-backend"
+        IMAGE = "${DOCKERHUB_USERNAME}/${IMAGE_NAME}"
         IMAGE_TAG = "${BUILD_NUMBER}"
-        KUBECONFIG = "/var/lib/jenkins/.kube/config"
     }
 
     stages {
@@ -17,44 +18,52 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh '''
+                sh """
                 docker build \
-                -t ${IMAGE_NAME}:${IMAGE_TAG} \
-                -t ${IMAGE_NAME}:latest \
+                -t ${IMAGE}:${IMAGE_TAG} \
+                -t ${IMAGE}:latest \
                 ./app/backend
-                '''
+                """
             }
         }
 
-        stage('Load Image into Minikube') {
+        stage('Login to Docker Hub') {
             steps {
-                sh '''
-                minikube image load ${IMAGE_NAME}:${IMAGE_TAG}
-                '''
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'USERNAME',
+                    passwordVariable: 'PASSWORD'
+                )]) {
+                    sh '''
+                    echo $PASSWORD | docker login -u $USERNAME --password-stdin
+                    '''
+                }
             }
         }
 
-        stage('Update Kubernetes Deployment') {
+        stage('Push Docker Images') {
             steps {
-                sh '''
-                kubectl set image deployment/cloudcart-backend \
-                backend=${IMAGE_NAME}:${IMAGE_TAG}
-                '''
+                sh """
+                docker push ${IMAGE}:${IMAGE_TAG}
+                docker push ${IMAGE}:latest
+                """
             }
         }
 
-        stage('Wait For Rollout') {
+        stage('Deploy to Kubernetes') {
             steps {
                 sh '''
+                kubectl rollout restart deployment/cloudcart-backend
                 kubectl rollout status deployment/cloudcart-backend
                 '''
             }
         }
 
-        stage('Verify Pods') {
+        stage('Verify Deployment') {
             steps {
                 sh '''
                 kubectl get pods
+                kubectl get svc
                 '''
             }
         }
@@ -72,15 +81,15 @@ pipeline {
     post {
 
         success {
-            echo '======================================='
-            echo ' Kubernetes Deployment Successful'
-            echo '======================================='
+            echo "==================================="
+            echo " Production Deployment Successful"
+            echo "==================================="
         }
 
         failure {
-            echo '======================================='
-            echo ' Deployment Failed'
-            echo '======================================='
+            echo "==================================="
+            echo " Deployment Failed"
+            echo "==================================="
 
             sh '''
             kubectl get pods
