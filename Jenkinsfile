@@ -35,7 +35,7 @@ pipeline {
                     passwordVariable: 'PASSWORD'
                 )]) {
                     sh '''
-                    echo $PASSWORD | docker login -u $USERNAME --password-stdin
+                    echo "$PASSWORD" | docker login -u "$USERNAME" --password-stdin
                     '''
                 }
             }
@@ -54,7 +54,7 @@ pipeline {
             steps {
                 sh '''
                 kubectl rollout restart deployment/cloudcart-backend
-                kubectl rollout status deployment/cloudcart-backend
+                kubectl rollout status deployment/cloudcart-backend --timeout=180s
                 '''
             }
         }
@@ -62,8 +62,16 @@ pipeline {
         stage('Verify Deployment') {
             steps {
                 sh '''
-                kubectl get pods
+                echo "===== Pods ====="
+                kubectl get pods -o wide
+
+                echo ""
+                echo "===== Services ====="
                 kubectl get svc
+
+                echo ""
+                echo "===== Deployment ====="
+                kubectl get deployment
                 '''
             }
         }
@@ -71,8 +79,28 @@ pipeline {
         stage('Health Check') {
             steps {
                 sh '''
-                URL=$(minikube service cloudcart-backend-service --url)
-                curl ${URL}/health
+                echo "Waiting for Pods to become Ready..."
+
+                kubectl wait \
+                --for=condition=ready \
+                pod \
+                -l app=cloudcart-backend \
+                --timeout=180s
+
+                MINIKUBE_IP=$(minikube ip)
+
+                NODE_PORT=$(kubectl get svc cloudcart-backend-service \
+                -o jsonpath='{.spec.ports[0].nodePort}')
+
+                echo "Minikube IP: $MINIKUBE_IP"
+                echo "NodePort: $NODE_PORT"
+
+                echo "Checking Health Endpoint..."
+
+                curl --fail http://$MINIKUBE_IP:$NODE_PORT/health
+
+                echo ""
+                echo "Application is Healthy."
                 '''
             }
         }
@@ -82,19 +110,29 @@ pipeline {
 
         success {
             echo "==================================="
-            echo " Production Deployment Successful"
-            echo "==================================="
-        }
-
-        failure {
-            echo "==================================="
-            echo " Deployment Failed"
+            echo "CloudCart Deployment Successful"
             echo "==================================="
 
             sh '''
             kubectl get pods
+            kubectl get svc
+            '''
+        }
+
+        failure {
+            echo "==================================="
+            echo "CloudCart Deployment Failed"
+            echo "==================================="
+
+            sh '''
+            kubectl get pods
+            kubectl get svc
             kubectl describe deployment cloudcart-backend
             '''
+        }
+
+        always {
+            sh 'docker logout || true'
         }
     }
 }
