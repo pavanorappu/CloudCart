@@ -30,6 +30,21 @@ pipeline {
             }
         }
 
+        stage('Trivy Filesystem Scan') {
+            steps {
+                sh '''
+                    echo "===== Trivy Filesystem Scan ====="
+
+                    trivy fs \
+                        --exit-code 1 \
+                        --severity HIGH,CRITICAL \
+                        --scanners vuln \
+                        .
+                '''
+            }
+        }
+
+
         stage('Build Docker Image') {
             steps {
                 sh """
@@ -37,6 +52,21 @@ pipeline {
                     -t ${IMAGE}:${IMAGE_TAG} \
                     -t ${IMAGE}:latest \
                     ./app/backend
+                """
+            }
+        }
+      
+
+        stage('Trivy Docker Image Scan') {
+            steps {
+                sh """
+                    echo "===== Trivy Docker Image Scan ====="
+
+                    trivy image \
+                        --exit-code 1 \
+                        --severity HIGH,CRITICAL \
+                        --scanners vuln \
+                        ${IMAGE}:${IMAGE_TAG}
                 """
             }
         }
