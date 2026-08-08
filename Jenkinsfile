@@ -16,13 +16,27 @@ pipeline {
             }
         }
 
+        stage('SonarQube Code Analysis') {
+            steps {
+                script {
+                    def scannerHome = tool 'SonarScanner'
+
+                    withSonarQubeEnv('SonarQube') {
+                        sh """
+                            ${scannerHome}/bin/sonar-scanner
+                        """
+                    }
+                }
+            }
+        }
+
         stage('Build Docker Image') {
             steps {
                 sh """
-                docker build \
-                -t ${IMAGE}:${IMAGE_TAG} \
-                -t ${IMAGE}:latest \
-                ./app/backend
+                    docker build \
+                    -t ${IMAGE}:${IMAGE_TAG} \
+                    -t ${IMAGE}:latest \
+                    ./app/backend
                 """
             }
         }
@@ -35,7 +49,7 @@ pipeline {
                     passwordVariable: 'PASSWORD'
                 )]) {
                     sh '''
-                    echo "$PASSWORD" | docker login -u "$USERNAME" --password-stdin
+                        echo $PASSWORD | docker login -u $USERNAME --password-stdin
                     '''
                 }
             }
@@ -44,8 +58,8 @@ pipeline {
         stage('Push Docker Images') {
             steps {
                 sh """
-                docker push ${IMAGE}:${IMAGE_TAG}
-                docker push ${IMAGE}:latest
+                    docker push ${IMAGE}:${IMAGE_TAG}
+                    docker push ${IMAGE}:latest
                 """
             }
         }
@@ -53,8 +67,8 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 sh '''
-                kubectl rollout restart deployment/cloudcart-backend
-                kubectl rollout status deployment/cloudcart-backend --timeout=180s
+                    kubectl rollout restart deployment/cloudcart-backend
+                    kubectl rollout status deployment/cloudcart-backend --timeout=180s
                 '''
             }
         }
@@ -62,16 +76,16 @@ pipeline {
         stage('Verify Deployment') {
             steps {
                 sh '''
-                echo "===== Pods ====="
-                kubectl get pods -o wide
+                    echo "===== Pods ====="
+                    kubectl get pods -o wide
 
-                echo ""
-                echo "===== Services ====="
-                kubectl get svc
+                    echo ""
+                    echo "===== Services ====="
+                    kubectl get svc
 
-                echo ""
-                echo "===== Deployment ====="
-                kubectl get deployment
+                    echo ""
+                    echo "===== Deployment ====="
+                    kubectl get deployment
                 '''
             }
         }
@@ -79,28 +93,29 @@ pipeline {
         stage('Health Check') {
             steps {
                 sh '''
-                echo "Waiting for Pods to become Ready..."
+                    echo "Waiting for Pods to become Ready..."
 
-                kubectl wait \
-                --for=condition=ready \
-                pod \
-                -l app=cloudcart-backend \
-                --timeout=180s
+                    kubectl wait \
+                        --for=condition=ready \
+                        pod \
+                        -l app=cloudcart-backend \
+                        --timeout=180s
 
-                MINIKUBE_IP=$(minikube ip)
+                    MINIKUBE_IP=$(minikube ip)
 
-                NODE_PORT=$(kubectl get svc cloudcart-backend-service \
-                -o jsonpath='{.spec.ports[0].nodePort}')
+                    NODE_PORT=$(kubectl get svc cloudcart-backend-service \
+                        -o jsonpath='{.spec.ports[0].nodePort}')
 
-                echo "Minikube IP: $MINIKUBE_IP"
-                echo "NodePort: $NODE_PORT"
+                    echo "Minikube IP: ${MINIKUBE_IP}"
+                    echo "NodePort: ${NODE_PORT}"
 
-                echo "Checking Health Endpoint..."
+                    echo "Checking Health Endpoint..."
 
-                curl --fail http://$MINIKUBE_IP:$NODE_PORT/health
+                    curl --fail \
+                        http://${MINIKUBE_IP}:${NODE_PORT}/health
 
-                echo ""
-                echo "Application is Healthy."
+                    echo ""
+                    echo "Application is Healthy."
                 '''
             }
         }
@@ -108,31 +123,28 @@ pipeline {
 
     post {
 
+        always {
+            sh '''
+                docker logout || true
+            '''
+        }
+
         success {
             echo "==================================="
-            echo "CloudCart Deployment Successful"
+            echo " CloudCart Deployment Successful"
             echo "==================================="
-
-            sh '''
-            kubectl get pods
-            kubectl get svc
-            '''
         }
 
         failure {
             echo "==================================="
-            echo "CloudCart Deployment Failed"
+            echo " CloudCart Deployment Failed"
             echo "==================================="
 
             sh '''
-            kubectl get pods
-            kubectl get svc
-            kubectl describe deployment cloudcart-backend
+                kubectl get pods || true
+                kubectl get svc || true
+                kubectl describe deployment cloudcart-backend || true
             '''
-        }
-
-        always {
-            sh 'docker logout || true'
         }
     }
 }
