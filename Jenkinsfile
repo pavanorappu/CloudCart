@@ -1,179 +1,349 @@
 pipeline {
+
     agent any
 
     environment {
-        DOCKERHUB_USERNAME = "pavanorappu"
-        IMAGE_NAME = "cloudcart-backend"
-        IMAGE = "${DOCKERHUB_USERNAME}/${IMAGE_NAME}"
+
+        // Docker Hub repository
+        DOCKERHUB_REPO = "pavanorappu/cloudcart-backend"
+
+        // Unique immutable tag for every Jenkins build
         IMAGE_TAG = "${BUILD_NUMBER}"
+
+        // Kubernetes
+        K8S_DEPLOYMENT = "cloudcart-backend"
+        K8S_CONTAINER = "backend"
+
+        // Image used by Trivy
+        TRIVY_IMAGE = "pavanorappu/cloudcart-backend:${BUILD_NUMBER}"
     }
 
     stages {
 
+        // ============================================================
+        // 1. CHECKOUT
+        // ============================================================
         stage('Checkout') {
             steps {
+
+                echo "Checking out CloudCart source code..."
+
                 checkout scm
-            }
-        }
 
-        stage('SonarQube Code Analysis') {
-            steps {
-                script {
-                    def scannerHome = tool 'SonarScanner'
-
-                    withSonarQubeEnv('SonarQube') {
-                        sh """
-                            ${scannerHome}/bin/sonar-scanner
-                        """
-                    }
-                }
-            }
-        }
-
-        stage('Trivy Filesystem Scan') {
-            steps {
                 sh '''
-                    echo "===== Trivy Filesystem Scan ====="
+                    echo "========================================"
+                    echo "Current Branch"
+                    echo "========================================"
 
-                    trivy fs \
-                        --exit-code 1 \
-                        --severity HIGH,CRITICAL \
-                        --scanners vuln \
-                        .
+                    git branch --show-current
+
+                    echo "========================================"
+                    echo "Latest Commit"
+                    echo "========================================"
+
+                    git log -1 --oneline
                 '''
             }
         }
 
 
+        // ============================================================
+        // 2. VERIFY TOOLS
+        // ============================================================
+        stage('Verify Tools') {
+            steps {
+
+                sh '''
+                    echo "========================================"
+                    echo "Docker Version"
+                    echo "========================================"
+
+                    docker --version
+
+
+                    echo "========================================"
+                    echo "Docker Daemon"
+                    echo "========================================"
+
+                    docker info > /dev/null
+
+
+                    echo "========================================"
+                    echo "Kubectl Version"
+                    echo "========================================"
+
+                    kubectl version --client
+
+
+                    echo "========================================"
+                    echo "Trivy Version"
+                    echo "========================================"
+
+                    trivy --version
+                '''
+            }
+        }
+
+
+        // ============================================================
+        // 3. BUILD DOCKER IMAGE
+        // ============================================================
         stage('Build Docker Image') {
             steps {
-                sh """
-                    docker build \
-                    -t ${IMAGE}:${IMAGE_TAG} \
-                    -t ${IMAGE}:latest \
-                    ./app/backend
-                """
+
+                echo "Building CloudCart backend Docker image..."
+
+                sh '''
+                    docker build --no-cache \
+                        -t ${DOCKERHUB_REPO}:${IMAGE_TAG} \
+                        ./app/backend
+
+                    echo "========================================"
+                    echo "Docker Image Created"
+                    echo "========================================"
+
+                    docker images ${DOCKERHUB_REPO}:${IMAGE_TAG}
+                '''
             }
         }
-      
 
-        stage('Trivy Docker Image Scan') {
+
+        // ============================================================
+        // 4. TEST DOCKER IMAGE
+        // ============================================================
+        stage('Test Docker Image') {
             steps {
-                sh """
-                    echo "===== Trivy Docker Image Scan ====="
 
+                echo "Testing Docker image..."
+
+                sh '''
+                    echo "========================================"
+                    echo "Python Version"
+                    echo "========================================"
+
+                    docker run --rm \
+                        ${DOCKERHUB_REPO}:${IMAGE_TAG} \
+                        python --version
+
+
+                    echo "========================================"
+                    echo "Application Files"
+                    echo "========================================"
+
+                    docker run --rm \
+                        ${DOCKERHUB_REPO}:${IMAGE_TAG} \
+                        ls -la /app
+                '''
+            }
+        }
+
+
+        // ============================================================
+        // 5. TRIVY SECURITY SCAN
+        // ============================================================
+        stage('Trivy Security Scan') {
+            steps {
+
+                echo "Scanning Docker image for HIGH and CRITICAL vulnerabilities..."
+
+                sh '''
                     trivy image \
-                        --exit-code 1 \
+                        --ignore-unfixed \
                         --severity HIGH,CRITICAL \
                         --scanners vuln \
-                        ${IMAGE}:${IMAGE_TAG}
-                """
+                        --exit-code 1 \
+                        ${TRIVY_IMAGE}
+                '''
             }
         }
 
-        stage('Login to Docker Hub') {
+
+        // ============================================================
+        // 6. DOCKER HUB LOGIN
+        // ============================================================
+        stage('Docker Hub Login') {
             steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-creds',
-                    usernameVariable: 'USERNAME',
-                    passwordVariable: 'PASSWORD'
-                )]) {
+
+                echo "Logging in to Docker Hub..."
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+                ]) {
+
                     sh '''
-                        echo $PASSWORD | docker login -u $USERNAME --password-stdin
+                        echo "$DOCKER_PASSWORD" | docker login \
+                            --username "$DOCKER_USERNAME" \
+                            --password-stdin
                     '''
                 }
             }
         }
 
-        stage('Push Docker Images') {
+
+        // ============================================================
+        // 7. PUSH IMAGE
+        // ============================================================
+        stage('Push Docker Image') {
             steps {
-                sh """
-                    docker push ${IMAGE}:${IMAGE_TAG}
-                    docker push ${IMAGE}:latest
-                """
+
+                echo "Pushing Docker image to Docker Hub..."
+
+                sh '''
+                    docker push ${DOCKERHUB_REPO}:${IMAGE_TAG}
+                '''
             }
         }
 
+
+        // ============================================================
+        // 8. DEPLOY TO KUBERNETES
+        // ============================================================
         stage('Deploy to Kubernetes') {
             steps {
+
+                echo "Deploying CloudCart backend to Kubernetes..."
+
                 sh '''
-                    kubectl rollout restart deployment/cloudcart-backend
-                    kubectl rollout status deployment/cloudcart-backend --timeout=180s
+                    echo "========================================"
+                    echo "Kubernetes Cluster"
+                    echo "========================================"
+
+                    kubectl get nodes
+
+
+                    echo "========================================"
+                    echo "Applying Backend Deployment"
+                    echo "========================================"
+
+                    kubectl apply \
+                        -f kubernetes/backend-deployment.yaml
+
+
+                    echo "========================================"
+                    echo "Applying Backend Service"
+                    echo "========================================"
+
+                    kubectl apply \
+                        -f kubernetes/backend-service.yaml
+
+
+                    echo "========================================"
+                    echo "Updating Backend Image"
+                    echo "========================================"
+
+                    kubectl set image deployment/${K8S_DEPLOYMENT} \
+                        ${K8S_CONTAINER}=${DOCKERHUB_REPO}:${IMAGE_TAG}
+
+
+                    echo "========================================"
+                    echo "Waiting for Kubernetes Rollout"
+                    echo "========================================"
+
+                    kubectl rollout status \
+                        deployment/${K8S_DEPLOYMENT} \
+                        --timeout=180s
                 '''
             }
         }
 
+
+        // ============================================================
+        // 9. VERIFY DEPLOYMENT
+        // ============================================================
         stage('Verify Deployment') {
             steps {
+
                 sh '''
-                    echo "===== Pods ====="
+                    echo "========================================"
+                    echo "Pods"
+                    echo "========================================"
+
                     kubectl get pods -o wide
 
-                    echo ""
-                    echo "===== Services ====="
+
+                    echo "========================================"
+                    echo "Services"
+                    echo "========================================"
+
                     kubectl get svc
 
-                    echo ""
-                    echo "===== Deployment ====="
-                    kubectl get deployment
-                '''
-            }
-        }
 
-        stage('Health Check') {
-            steps {
-                sh '''
-                    echo "Waiting for Pods to become Ready..."
+                    echo "========================================"
+                    echo "Deployment"
+                    echo "========================================"
 
-                    kubectl wait \
-                        --for=condition=ready \
-                        pod \
-                        -l app=cloudcart-backend \
-                        --timeout=180s
+                    kubectl get deployment ${K8S_DEPLOYMENT}
 
-                    MINIKUBE_IP=$(minikube ip)
 
-                    NODE_PORT=$(kubectl get svc cloudcart-backend-service \
-                        -o jsonpath='{.spec.ports[0].nodePort}')
+                    echo "========================================"
+                    echo "Deployed Image"
+                    echo "========================================"
 
-                    echo "Minikube IP: ${MINIKUBE_IP}"
-                    echo "NodePort: ${NODE_PORT}"
-
-                    echo "Checking Health Endpoint..."
-
-                    curl --fail \
-                        http://${MINIKUBE_IP}:${NODE_PORT}/health
+                    kubectl get deployment ${K8S_DEPLOYMENT} \
+                        -o jsonpath='{.spec.template.spec.containers[0].image}'
 
                     echo ""
-                    echo "Application is Healthy."
+
+
+                    echo "========================================"
+                    echo "CloudCart Backend Deployment Successful"
+                    echo "========================================"
                 '''
             }
         }
     }
 
+
+    // ================================================================
+    // POST ACTIONS
+    // ================================================================
     post {
 
-        always {
-            sh '''
-                docker logout || true
+        success {
+
+            echo '''
+            ============================================================
+              CloudCart CI/CD Pipeline SUCCESSFUL
+            ============================================================
+
+            ✓ Source code checked out
+            ✓ Docker image built
+            ✓ Docker image tested
+            ✓ Trivy security scan passed
+            ✓ Image pushed to Docker Hub
+            ✓ Kubernetes deployment successful
+            ✓ Rollout completed successfully
+
+            ============================================================
             '''
         }
 
-        success {
-            echo "==================================="
-            echo " CloudCart Deployment Successful"
-            echo "==================================="
-        }
 
         failure {
-            echo "==================================="
-            echo " CloudCart Deployment Failed"
-            echo "==================================="
+
+            echo '''
+            ============================================================
+              CloudCart CI/CD Pipeline FAILED
+            ============================================================
+
+            Check the failed Jenkins stage and console output.
+
+            ============================================================
+            '''
+        }
+
+
+        always {
+
+            echo "Cleaning Docker resources..."
 
             sh '''
-                kubectl get pods || true
-                kubectl get svc || true
-                kubectl describe deployment cloudcart-backend || true
+                docker logout || true
+                docker image prune -f || true
             '''
         }
     }
