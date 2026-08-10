@@ -12,8 +12,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Upgrade vulnerable Python packages
 RUN pip install --no-cache-dir --upgrade \
-        setuptools>=78.1.1 \
-        msgpack>=1.2.1 \
+        "setuptools>=78.1.1" \
+        "msgpack>=1.2.1" \
         wheel
 
 # Copy application code
