@@ -4,19 +4,31 @@ pipeline {
 
     environment {
 
-        // Docker Hub repository
+        // ============================================================
+        // Docker Hub
+        // ============================================================
         DOCKERHUB_REPO = "pavanorappu/cloudcart-backend"
-
-        // Unique immutable tag for every Jenkins build
         IMAGE_TAG = "${BUILD_NUMBER}"
 
+        // ============================================================
         // Kubernetes
+        // ============================================================
         K8S_DEPLOYMENT = "cloudcart-backend"
         K8S_CONTAINER = "backend"
+        K8S_SERVICE = "cloudcart-backend-service"
 
-        // Image used by Trivy
+        // ============================================================
+        // Trivy
+        // ============================================================
         TRIVY_IMAGE = "pavanorappu/cloudcart-backend:${BUILD_NUMBER}"
+
+        // ============================================================
+        // SonarQube
+        // ============================================================
+        SONAR_PROJECT_KEY = "CloudCart"
+        SONAR_PROJECT_NAME = "CloudCart"
     }
+
 
     stages {
 
@@ -24,6 +36,7 @@ pipeline {
         // 1. CHECKOUT
         // ============================================================
         stage('Checkout') {
+
             steps {
 
                 echo "Checking out CloudCart source code..."
@@ -51,32 +64,27 @@ pipeline {
         // 2. VERIFY TOOLS
         // ============================================================
         stage('Verify Tools') {
+
             steps {
 
                 sh '''
                     echo "========================================"
-                    echo "Docker Version"
+                    echo "Docker"
                     echo "========================================"
 
                     docker --version
-
-
-                    echo "========================================"
-                    echo "Docker Daemon"
-                    echo "========================================"
-
                     docker info > /dev/null
 
 
                     echo "========================================"
-                    echo "Kubectl Version"
+                    echo "Kubectl"
                     echo "========================================"
 
                     kubectl version --client
 
 
                     echo "========================================"
-                    echo "Trivy Version"
+                    echo "Trivy"
                     echo "========================================"
 
                     trivy --version
@@ -86,9 +94,59 @@ pipeline {
 
 
         // ============================================================
-        // 3. BUILD DOCKER IMAGE
+        // 3. SONARQUBE CODE ANALYSIS
+        // ============================================================
+        stage('SonarQube Analysis') {
+
+            steps {
+
+                echo "Running SonarQube static code analysis..."
+
+                withSonarQubeEnv('SonarQube') {
+
+                    script {
+
+                        def scannerHome = tool 'SonarScanner'
+
+                        sh """
+                            echo "========================================"
+                            echo "SonarScanner"
+                            echo "========================================"
+
+                            ${scannerHome}/bin/sonar-scanner \
+                                -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                                -Dsonar.projectName=${SONAR_PROJECT_NAME} \
+                                -Dsonar.sources=app/backend \
+                                -Dsonar.sourceEncoding=UTF-8
+                        """
+                    }
+                }
+            }
+        }
+
+
+        // ============================================================
+        // 4. SONARQUBE QUALITY GATE
+        // ============================================================
+        stage('SonarQube Quality Gate') {
+
+            steps {
+
+                echo "Waiting for SonarQube Quality Gate..."
+
+                timeout(time: 5, unit: 'MINUTES') {
+
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+
+        // ============================================================
+        // 5. BUILD DOCKER IMAGE
         // ============================================================
         stage('Build Docker Image') {
+
             steps {
 
                 echo "Building CloudCart backend Docker image..."
@@ -109,9 +167,10 @@ pipeline {
 
 
         // ============================================================
-        // 4. TEST DOCKER IMAGE
+        // 6. TEST DOCKER IMAGE
         // ============================================================
         stage('Test Docker Image') {
+
             steps {
 
                 echo "Testing Docker image..."
@@ -139,9 +198,10 @@ pipeline {
 
 
         // ============================================================
-        // 5. TRIVY SECURITY SCAN
+        // 7. TRIVY SECURITY SCAN
         // ============================================================
         stage('Trivy Security Scan') {
+
             steps {
 
                 echo "Scanning Docker image for HIGH and CRITICAL vulnerabilities..."
@@ -159,9 +219,10 @@ pipeline {
 
 
         // ============================================================
-        // 6. DOCKER HUB LOGIN
+        // 8. DOCKER HUB LOGIN
         // ============================================================
         stage('Docker Hub Login') {
+
             steps {
 
                 echo "Logging in to Docker Hub..."
@@ -185,9 +246,10 @@ pipeline {
 
 
         // ============================================================
-        // 7. PUSH IMAGE
+        // 9. PUSH IMAGE
         // ============================================================
         stage('Push Docker Image') {
+
             steps {
 
                 echo "Pushing Docker image to Docker Hub..."
@@ -200,23 +262,24 @@ pipeline {
 
 
         // ============================================================
-        // 8. DEPLOY TO KUBERNETES
+        // 10. DEPLOY TO KUBERNETES
         // ============================================================
         stage('Deploy to Kubernetes') {
+
             steps {
 
                 echo "Deploying CloudCart backend to Kubernetes..."
 
                 sh '''
                     echo "========================================"
-                    echo "Kubernetes Cluster"
+                    echo "Kubernetes Nodes"
                     echo "========================================"
 
                     kubectl get nodes
 
 
                     echo "========================================"
-                    echo "Applying Backend Deployment"
+                    echo "Applying Deployment"
                     echo "========================================"
 
                     kubectl apply \
@@ -224,7 +287,7 @@ pipeline {
 
 
                     echo "========================================"
-                    echo "Applying Backend Service"
+                    echo "Applying Service"
                     echo "========================================"
 
                     kubectl apply \
@@ -232,7 +295,7 @@ pipeline {
 
 
                     echo "========================================"
-                    echo "Updating Backend Image"
+                    echo "Updating Image"
                     echo "========================================"
 
                     kubectl set image deployment/${K8S_DEPLOYMENT} \
@@ -240,7 +303,7 @@ pipeline {
 
 
                     echo "========================================"
-                    echo "Waiting for Kubernetes Rollout"
+                    echo "Waiting for Rollout"
                     echo "========================================"
 
                     kubectl rollout status \
@@ -252,9 +315,10 @@ pipeline {
 
 
         // ============================================================
-        // 9. VERIFY DEPLOYMENT
+        // 11. VERIFY KUBERNETES DEPLOYMENT
         // ============================================================
         stage('Verify Deployment') {
+
             steps {
 
                 sh '''
@@ -288,9 +352,65 @@ pipeline {
 
                     echo ""
 
+                    echo "========================================"
+                    echo "Kubernetes Deployment Successful"
+                    echo "========================================"
+                '''
+            }
+        }
+
+
+        // ============================================================
+        // 12. APPLICATION HEALTH CHECK
+        // ============================================================
+        stage('Application Health Check') {
+
+            steps {
+
+                echo "Checking CloudCart application health..."
+
+                sh '''
+                    echo "========================================"
+                    echo "Starting Port Forward"
+                    echo "========================================"
+
+                    kubectl port-forward \
+                        service/${K8S_SERVICE} \
+                        5001:5000 \
+                        > /tmp/cloudcart-port-forward.log 2>&1 &
+
+                    PORT_FORWARD_PID=$!
+
+                    sleep 5
+
 
                     echo "========================================"
-                    echo "CloudCart Backend Deployment Successful"
+                    echo "Health Endpoint"
+                    echo "========================================"
+
+                    curl -f http://localhost:5001/health
+
+                    echo ""
+
+
+                    echo "========================================"
+                    echo "Root Endpoint"
+                    echo "========================================"
+
+                    curl -f http://localhost:5001/
+
+                    echo ""
+
+
+                    echo "========================================"
+                    echo "Stopping Port Forward"
+                    echo "========================================"
+
+                    kill ${PORT_FORWARD_PID} || true
+
+
+                    echo "========================================"
+                    echo "Application Health Check PASSED"
                     echo "========================================"
                 '''
             }
@@ -306,34 +426,37 @@ pipeline {
         success {
 
             echo '''
-            ============================================================
-              CloudCart CI/CD Pipeline SUCCESSFUL
-            ============================================================
+============================================================
+          CloudCart CI/CD PIPELINE SUCCESSFUL
+============================================================
 
-            ✓ Source code checked out
-            ✓ Docker image built
-            ✓ Docker image tested
-            ✓ Trivy security scan passed
-            ✓ Image pushed to Docker Hub
-            ✓ Kubernetes deployment successful
-            ✓ Rollout completed successfully
+✓ Source code checked out
+✓ SonarQube code analysis completed
+✓ SonarQube Quality Gate passed
+✓ Docker image built
+✓ Docker image tested
+✓ Trivy security scan passed
+✓ Image pushed to Docker Hub
+✓ Kubernetes deployment successful
+✓ Kubernetes rollout completed
+✓ Application health check passed
 
-            ============================================================
-            '''
+============================================================
+'''
         }
 
 
         failure {
 
             echo '''
-            ============================================================
-              CloudCart CI/CD Pipeline FAILED
-            ============================================================
+============================================================
+            CloudCart CI/CD PIPELINE FAILED
+============================================================
 
-            Check the failed Jenkins stage and console output.
+Check the failed Jenkins stage and console output.
 
-            ============================================================
-            '''
+============================================================
+'''
         }
 
 
