@@ -26,38 +26,59 @@ spec:
 
     spec:
       containers:
-      - name: backend
+        - name: backend
 
-        image: pavanorappu/cloudcart-backend:latest
+          image: pavanorappu/cloudcart-backend:latest
+          imagePullPolicy: Always
 
-        imagePullPolicy: Always
+          env:
+            - name: DB_HOST
+              value: "host.minikube.internal"
 
-        ports:
-        - containerPort: 5000
+            - name: DB_PORT
+              value: "3306"
 
-        resources:
-          requests:
-            cpu: "200m"
-            memory: "256Mi"
+            - name: DB_NAME
+              value: "cloudcart"
 
-          limits:
-            cpu: "500m"
-            memory: "512Mi"
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: cloudcart-db-secret
+                  key: DB_USER
 
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 5000
-          initialDelaySeconds: 5
-          periodSeconds: 10
-          timeoutSeconds: 3
-          failureThreshold: 3
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cloudcart-db-secret
+                  key: DB_PASSWORD
 
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 5000
-          initialDelaySeconds: 15
-          periodSeconds: 20
-          timeoutSeconds: 3
-          failureThreshold: 3
+          ports:
+            - containerPort: 5000
+
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
